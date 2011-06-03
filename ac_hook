@@ -1,0 +1,66 @@
+# Configs
+AC_TOOLCHAIN_BRANCH=froyo_spongebob
+AC_TOOLCHAIN_VER=arm-eabi-4.4.0
+AC_PROJECTS="\
+             a1:default"
+AC_HOOK_BRANCH="froyo_spongebob"
+
+# We only have one project configured right now
+LC_KERNEL_CONFIG="acer-q8k-a1-dvt_defconfig"
+
+# Hook functions
+function ac_hook_compile {
+    #$1: project, $2: SKU
+
+    #FIXME: sanity check
+    local _lc_pj=$1
+    local _lc_sku=$2
+    local _lc_outdir=$3
+    local _lc_tmpdir=$4
+
+    echo "Executing ac_hook_compile: $*"
+
+    if [ ! -d $_lc_outdir ]; then
+        mkdir -p $_lc_outdir
+    fi
+    if [ ! -d $_lc_tmpdir ]; then
+        mkdir -p $_lc_tmpdir
+    fi
+
+    local _lc_kcflags=
+    if [ $_lc_sku != "default" ]; then
+        _lc_kcflags=KCFLAGS=-D__${_lc_sku}__
+    fi
+
+    echo "Start to make kernel"
+    make O=$_lc_tmpdir ARCH=arm CROSS_COMPILE=arm-eabi- ${_lc_kcflags} $LC_KERNEL_CONFIG
+    make O=$_lc_tmpdir ARCH=arm CROSS_COMPILE=arm-eabi- ${_lc_kcflags} -j 16
+    make O=$_lc_tmpdir ARCH=arm CROSS_COMPILE=arm-eabi- ${_lc_kcflags} -j 16 modules
+
+    cp $_lc_tmpdir/arch/arm/boot/zImage $_lc_outdir/kernel.${_lc_sku}
+    cp $_lc_tmpdir/drivers/net/wireless/bcm4325/dhd.ko $_lc_outdir/dhd.ko.${_lc_sku}
+    zip $_lc_tmpdir/debug_kernel.zip.${_lc_sku} $_lc_tmpdir/vmlinux
+    cp $_lc_tmpdir/debug_kernel.zip.${_lc_sku} $_lc_outdir/
+
+    make mrproper
+    make clean
+    rm -rf $_lc_tmpdir/*
+}
+
+#FORMAT: FILE1 FILE2 FILE3...
+function ac_hook_get_submit {
+    #$1: project, $2: output image folder
+
+    local _lc_pj=$1
+    local _lc_outdir=$2
+    #FIXME: sanity check on folder
+
+    local _tmp=""
+    local _binary=""
+    for _tmp in `ls $_lc_outdir/dhd.ko* $_lc_outdir/kernel.* $_lc_outdir/debug_kernel*.*`; do
+        _binary="$_binary $_tmp"
+    done
+
+    echo $_binary
+}
+
