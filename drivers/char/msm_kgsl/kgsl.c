@@ -223,8 +223,11 @@ int kgsl_setstate(struct kgsl_device *device, uint32_t flags)
 {
 	int status = -ENXIO;
 
-	if (device->ftbl.device_setstate)
+	if (flags && device->ftbl.device_setstate) {
 		status = device->ftbl.device_setstate(device, flags);
+		device->mmu.tlb_flags &= ~flags;
+	} else
+		status = 0;
 
 	return status;
 }
@@ -253,13 +256,10 @@ int kgsl_pwrctrl(unsigned int pwrflag)
 			if (kgsl_driver.clk_freq[KGSL_3D_MIN_FREQ])
 				clk_set_min_rate(kgsl_driver.yamato_grp_src_clk,
 					kgsl_driver.clk_freq[KGSL_3D_MIN_FREQ]);
-			if ((kgsl_driver.g12_device.hwaccess_blocked ==
-				KGSL_TRUE) ||
-				(kgsl_driver.power_flags &
-				KGSL_PWRFLAGS_G12_CLK_OFF))
+			if (kgsl_driver.clk_freq[KGSL_AXI_HIGH_3D])
 				pm_qos_update_requirement(
 					PM_QOS_SYSTEM_BUS_FREQ,
-					DRIVER_NAME, PM_QOS_DEFAULT_VALUE);
+					"kgsl_3d", PM_QOS_DEFAULT_VALUE);
 			kgsl_driver.power_flags &=
 					~(KGSL_PWRFLAGS_YAMATO_CLK_ON);
 			kgsl_driver.power_flags |= KGSL_PWRFLAGS_YAMATO_CLK_OFF;
@@ -267,11 +267,10 @@ int kgsl_pwrctrl(unsigned int pwrflag)
 		return KGSL_SUCCESS;
 	case KGSL_PWRFLAGS_YAMATO_CLK_ON:
 		if (kgsl_driver.power_flags & KGSL_PWRFLAGS_YAMATO_CLK_OFF) {
-			if (kgsl_driver.clk_freq[KGSL_AXI_MAX_FREQ]) {
+			if (kgsl_driver.clk_freq[KGSL_AXI_HIGH_3D])
 				pm_qos_update_requirement(
-					PM_QOS_SYSTEM_BUS_FREQ, DRIVER_NAME,
-				kgsl_driver.clk_freq[KGSL_AXI_MAX_FREQ]);
-			}
+					PM_QOS_SYSTEM_BUS_FREQ, "kgsl_3d",
+					kgsl_driver.clk_freq[KGSL_AXI_HIGH_3D]);
 			if (kgsl_driver.clk_freq[KGSL_3D_MAX_FREQ])
 				clk_set_min_rate(kgsl_driver.yamato_grp_src_clk,
 					kgsl_driver.clk_freq[KGSL_3D_MAX_FREQ]);
@@ -296,22 +295,20 @@ int kgsl_pwrctrl(unsigned int pwrflag)
 					kgsl_driver.g12_grp_clk,
 					kgsl_driver.clk_freq[KGSL_2D_MIN_FREQ]);
 			}
-			if (kgsl_driver.power_flags &
-					KGSL_PWRFLAGS_YAMATO_CLK_OFF)
+			if (kgsl_driver.clk_freq[KGSL_AXI_HIGH_2D])
 				pm_qos_update_requirement(
 					PM_QOS_SYSTEM_BUS_FREQ,
-					DRIVER_NAME, PM_QOS_DEFAULT_VALUE);
+					"kgsl_2d", PM_QOS_DEFAULT_VALUE);
 			kgsl_driver.power_flags &= ~(KGSL_PWRFLAGS_G12_CLK_ON);
 			kgsl_driver.power_flags |= KGSL_PWRFLAGS_G12_CLK_OFF;
 		}
 		return KGSL_SUCCESS;
 	case KGSL_PWRFLAGS_G12_CLK_ON:
 		if (kgsl_driver.power_flags & KGSL_PWRFLAGS_G12_CLK_OFF) {
-			if (kgsl_driver.clk_freq[KGSL_AXI_MAX_FREQ]) {
+			if (kgsl_driver.clk_freq[KGSL_AXI_HIGH_2D])
 				pm_qos_update_requirement(
-					PM_QOS_SYSTEM_BUS_FREQ, DRIVER_NAME,
-				kgsl_driver.clk_freq[KGSL_AXI_MAX_FREQ]);
-			}
+					PM_QOS_SYSTEM_BUS_FREQ, "kgsl_2d",
+					kgsl_driver.clk_freq[KGSL_AXI_HIGH_2D]);
 			if (kgsl_driver.g12_grp_pclk)
 				clk_enable(kgsl_driver.g12_grp_pclk);
 			if (kgsl_driver.g12_grp_clk != NULL) {
@@ -326,22 +323,46 @@ int kgsl_pwrctrl(unsigned int pwrflag)
 			kgsl_driver.power_flags |= KGSL_PWRFLAGS_G12_CLK_ON;
 		}
 		return KGSL_SUCCESS;
-	case KGSL_PWRFLAGS_POWER_OFF:
-		if (kgsl_driver.power_flags & KGSL_PWRFLAGS_POWER_ON) {
+        case KGSL_PWRFLAGS_YAMATO_POWER_OFF:
+                if (kgsl_driver.power_flags & KGSL_PWRFLAGS_YAMATO_POWER_ON) {
 			internal_pwr_rail_ctl(PWR_RAIL_GRP_CLK, KGSL_FALSE);
 			internal_pwr_rail_mode(PWR_RAIL_GRP_CLK,
 					PWR_RAIL_CTL_AUTO);
-			kgsl_driver.power_flags &= ~(KGSL_PWRFLAGS_POWER_ON);
-			kgsl_driver.power_flags |= KGSL_PWRFLAGS_POWER_OFF;
+                        kgsl_driver.power_flags &=
+                                        ~(KGSL_PWRFLAGS_YAMATO_POWER_ON);
+                        kgsl_driver.power_flags |=
+                                        KGSL_PWRFLAGS_YAMATO_POWER_OFF;
 		}
 		return KGSL_SUCCESS;
-	case KGSL_PWRFLAGS_POWER_ON:
-		if (kgsl_driver.power_flags & KGSL_PWRFLAGS_POWER_OFF) {
+        case KGSL_PWRFLAGS_YAMATO_POWER_ON:
+                if (kgsl_driver.power_flags & KGSL_PWRFLAGS_YAMATO_POWER_OFF) {
 			internal_pwr_rail_mode(PWR_RAIL_GRP_CLK,
 					PWR_RAIL_CTL_MANUAL);
 			internal_pwr_rail_ctl(PWR_RAIL_GRP_CLK, KGSL_TRUE);
-			kgsl_driver.power_flags &= ~(KGSL_PWRFLAGS_POWER_OFF);
-			kgsl_driver.power_flags |= KGSL_PWRFLAGS_POWER_ON;
+                        kgsl_driver.power_flags &=
+                                        ~(KGSL_PWRFLAGS_YAMATO_POWER_OFF);
+                        kgsl_driver.power_flags |=
+                                        KGSL_PWRFLAGS_YAMATO_POWER_ON;
+                }
+                return KGSL_SUCCESS;
+        case KGSL_PWRFLAGS_G12_POWER_OFF:
+                if (kgsl_driver.power_flags & KGSL_PWRFLAGS_G12_POWER_ON) {
+                        internal_pwr_rail_ctl(PWR_RAIL_GRP_2D_CLK, KGSL_FALSE);
+                        internal_pwr_rail_mode(PWR_RAIL_GRP_2D_CLK,
+                                        PWR_RAIL_CTL_AUTO);
+                        kgsl_driver.power_flags &=
+                                        ~(KGSL_PWRFLAGS_G12_POWER_ON);
+                        kgsl_driver.power_flags |= KGSL_PWRFLAGS_G12_POWER_OFF;
+                }
+                return KGSL_SUCCESS;
+        case KGSL_PWRFLAGS_G12_POWER_ON:
+                if (kgsl_driver.power_flags & KGSL_PWRFLAGS_G12_POWER_OFF) {
+                        internal_pwr_rail_mode(PWR_RAIL_GRP_2D_CLK,
+					PWR_RAIL_CTL_MANUAL);
+                        internal_pwr_rail_ctl(PWR_RAIL_GRP_2D_CLK, KGSL_TRUE);
+                        kgsl_driver.power_flags &=
+                                        ~(KGSL_PWRFLAGS_G12_POWER_OFF);
+                        kgsl_driver.power_flags |= KGSL_PWRFLAGS_G12_POWER_ON;
 		}
 		return KGSL_SUCCESS;
 	case KGSL_PWRFLAGS_YAMATO_IRQ_ON:
@@ -421,20 +442,20 @@ static int kgsl_first_open_locked(void)
 	BUG_ON(kgsl_driver.imem_clk == NULL);
 
 	kgsl_driver.power_flags = KGSL_PWRFLAGS_YAMATO_CLK_OFF |
-			KGSL_PWRFLAGS_POWER_OFF | KGSL_PWRFLAGS_YAMATO_IRQ_OFF;
+			KGSL_PWRFLAGS_YAMATO_POWER_OFF | KGSL_PWRFLAGS_YAMATO_IRQ_OFF;
 	if (kgsl_driver.g12_device.hwaccess_blocked == KGSL_FALSE)
 		kgsl_driver.power_flags |= KGSL_PWRFLAGS_G12_CLK_OFF |
-			KGSL_PWRFLAGS_G12_IRQ_OFF;
-	#ifndef CONFIG_ARCH_MSM7X30
-		kgsl_pwrctrl(KGSL_PWRFLAGS_POWER_ON);
-	#endif
+			KGSL_PWRFLAGS_G12_POWER_OFF | KGSL_PWRFLAGS_G12_IRQ_OFF;
+
+	/* Turn the clocks on before the power.  Required for some platforms,
+	   has no adverse effect on the others */
 	kgsl_pwrctrl(KGSL_PWRFLAGS_YAMATO_CLK_ON);
-	#ifdef CONFIG_ARCH_MSM7X30
-		/* 7x30 has HW bug and needs clocks turned on before the power
-		rails */
-		kgsl_pwrctrl(KGSL_PWRFLAGS_POWER_ON);
-	#endif
+	kgsl_pwrctrl(KGSL_PWRFLAGS_YAMATO_POWER_ON);
+
 	kgsl_driver.is_suspended = KGSL_FALSE;
+
+	INIT_LIST_HEAD(&kgsl_driver.pagetable_list);
+	mutex_init(&kgsl_driver.pt_mutex);
 
 	/* init devices */
 	result = kgsl_yamato_init(&kgsl_driver.yamato_device,
@@ -463,15 +484,10 @@ static int kgsl_last_release_locked(void)
 	/* close yamato */
 	kgsl_yamato_close(&kgsl_driver.yamato_device);
 
-	#ifndef CONFIG_ARCH_MSM7X30
-		kgsl_pwrctrl(KGSL_PWRFLAGS_YAMATO_CLK_OFF);
-	#endif
-	kgsl_pwrctrl(KGSL_PWRFLAGS_POWER_OFF);
-	#ifdef CONFIG_ARCH_MSM7X30
-		/* 7x30 has HW bug and needs clocks turned off before the power
-		rails */
-		kgsl_pwrctrl(KGSL_PWRFLAGS_YAMATO_CLK_OFF);
-	#endif
+	/* For some platforms, power needs to go off before clocks */
+	kgsl_pwrctrl(KGSL_PWRFLAGS_YAMATO_POWER_OFF);
+	kgsl_pwrctrl(KGSL_PWRFLAGS_YAMATO_CLK_OFF);
+
 	kgsl_driver.power_flags = 0;
 
 	return 0;
@@ -519,6 +535,7 @@ static int kgsl_release(struct inode *inodep, struct file *filep)
 
 	if (atomic_dec_return(&kgsl_driver.open_count) == 0) {
 		KGSL_DRV_VDBG("last_release\n");
+		kgsl_g12_last_release_locked();
 		result = kgsl_last_release_locked();
 	}
 
@@ -560,6 +577,7 @@ static int kgsl_open(struct inode *inodep, struct file *filep)
 
 	if (atomic_inc_return(&kgsl_driver.open_count) == 1) {
 		result = kgsl_first_open_locked();
+		kgsl_g12_first_open_locked();
 		if (result != 0)
 			goto done;
 	}
@@ -610,43 +628,6 @@ kgsl_sharedmem_find(struct kgsl_file_private *private, unsigned int gpuaddr)
 	return result;
 }
 
-static struct kgsl_mem_entry *
-kgsl_sharedmem_find_phys(struct kgsl_file_private *private,
-			unsigned int physaddr)
-{
-	struct kgsl_mem_entry *entry = NULL, *result = NULL;
-
-	BUG_ON(private == NULL);
-
-	list_for_each_entry(entry, &private->mem_list, list) {
-		if (entry->memdesc.physaddr == physaddr) {
-			result = entry;
-			break;
-		}
-	}
-	return result;
-}
-
-struct kgsl_mem_entry *
-kgsl_sharedmem_find_region_phys(struct kgsl_file_private *private,
-				unsigned int physaddr,
-				size_t size)
-{
-	struct kgsl_mem_entry *entry = NULL, *result = NULL;
-
-	BUG_ON(private == NULL);
-
-	list_for_each_entry(entry, &private->mem_list, list) {
-		if (physaddr >= entry->memdesc.physaddr &&
-		    ((physaddr + size) <=
-			(entry->memdesc.physaddr + entry->memdesc.size))) {
-			result = entry;
-			break;
-		}
-	}
-
-	return result;
-}
 /*call with driver locked */
 struct kgsl_mem_entry *
 kgsl_sharedmem_find_region(struct kgsl_file_private *private,
@@ -684,7 +665,7 @@ static long kgsl_ioctl_cmdwindow_write(struct kgsl_file_private *private,
 	if (param.device_id == KGSL_DEVICE_YAMATO) {
 		result = -EINVAL;
 	} else if (param.device_id == KGSL_DEVICE_G12) {
-		kgsl_g12_check_open();
+		KGSL_G12_PRE_HWACCESS();
 		result = kgsl_g12_cmdwindow_write(&kgsl_driver.g12_device,
 					     param.target,
 					     param.addr,
@@ -730,6 +711,24 @@ done:
 	return result;
 }
 
+static long kgsl_ioctl_device_getproperty_pre(struct kgsl_file_private *private,
+					 void __user *arg)
+{
+	int result = 0;
+	struct kgsl_device_getproperty_pre param;
+
+	if (copy_from_user(&param, arg, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+	result = kgsl_yamato_getproperty(&kgsl_driver.yamato_device,
+				 param.type,
+				 param.value, param.sizebytes);
+
+done:
+	return result;
+}
+
 static long kgsl_ioctl_device_regread(struct kgsl_file_private *private,
 				     void __user *arg)
 {
@@ -745,7 +744,7 @@ static long kgsl_ioctl_device_regread(struct kgsl_file_private *private,
 				     param.offsetwords, &param.value);
 
 	} else if (param.device_id == KGSL_DEVICE_G12) {
-		kgsl_g12_check_open();
+		KGSL_G12_PRE_HWACCESS();
 		result = kgsl_g12_regread(&kgsl_driver.g12_device,
 				     param.offsetwords, &param.value);
 
@@ -764,6 +763,29 @@ done:
 	return result;
 }
 
+static long kgsl_ioctl_device_regread_pre(struct kgsl_file_private *private,
+				     void __user *arg)
+{
+	int result = 0;
+	struct kgsl_device_regread_pre param;
+
+	if (copy_from_user(&param, arg, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+	result = kgsl_yamato_regread(&kgsl_driver.yamato_device,
+			     param.offsetwords, &param.value);
+
+	if (result != 0)
+		goto done;
+
+	if (copy_to_user(arg, &param, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+done:
+	return result;
+}
 
 static long kgsl_ioctl_device_waittimestamp(struct kgsl_file_private *private,
 				     void __user *arg)
@@ -777,6 +799,9 @@ static long kgsl_ioctl_device_waittimestamp(struct kgsl_file_private *private,
 	}
 
 	mutex_unlock(&kgsl_driver.mutex);
+	/* Don't wait forever, set a max value for now */
+	if (param.timeout == -1)
+		param.timeout = 10 * MSEC_PER_SEC;
 	if (param.device_id == KGSL_DEVICE_YAMATO) {
 		result = kgsl_yamato_waittimestamp(&kgsl_driver.yamato_device,
 				     param.timestamp,
@@ -785,7 +810,9 @@ static long kgsl_ioctl_device_waittimestamp(struct kgsl_file_private *private,
 
 		kgsl_runpending(&kgsl_driver.yamato_device);
 	} else if (param.device_id == KGSL_DEVICE_G12) {
-		kgsl_g12_check_open();
+		mutex_lock(&kgsl_driver.mutex);
+		KGSL_G12_PRE_HWACCESS();
+		mutex_unlock(&kgsl_driver.mutex);
 		result = kgsl_g12_waittimestamp(&kgsl_driver.g12_device,
 				     param.timestamp,
 				     param.timeout);
@@ -795,6 +822,29 @@ static long kgsl_ioctl_device_waittimestamp(struct kgsl_file_private *private,
 	} else {
 		result = -EINVAL;
 	}
+
+done:
+	return result;
+}
+
+static long kgsl_ioctl_device_waittimestamp_pre(struct kgsl_file_private *private,
+				     void __user *arg)
+{
+	int result = 0;
+	struct kgsl_device_waittimestamp_pre param;
+
+	if (copy_from_user(&param, arg, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+
+	mutex_unlock(&kgsl_driver.mutex);
+	result = kgsl_yamato_waittimestamp(&kgsl_driver.yamato_device,
+			     param.timestamp,
+			     param.timeout);
+	mutex_lock(&kgsl_driver.mutex);
+
+	kgsl_runpending(&kgsl_driver.yamato_device);
 
 done:
 	return result;
@@ -838,10 +888,8 @@ static long kgsl_ioctl_rb_issueibcmds(struct kgsl_file_private *private,
 					     &param.timestamp,
 					     param.flags);
 	} else if (param.device_id == KGSL_DEVICE_G12) {
-		kgsl_g12_check_open();
-		if (param.drawctxt_id >= KGSL_CONTEXT_MAX ||
-			(private->g12_ctxt_id_mask & 1 <<
-				(param.drawctxt_id - 1)) == 0) {
+		KGSL_G12_PRE_HWACCESS();
+		if ((private->g12_ctxt_id_mask & 1 << param.drawctxt_id) == 0) {
 
 			result = -EINVAL;
 			KGSL_DRV_ERR("invalid drawctxt drawctxt_id %d\n",
@@ -850,7 +898,7 @@ static long kgsl_ioctl_rb_issueibcmds(struct kgsl_file_private *private,
 			goto done;
 		}
 
-		if (kgsl_sharedmem_find_region_phys(private, param.ibaddr,
+		if (kgsl_sharedmem_find_region(private, param.ibaddr,
 				param.sizedwords*sizeof(uint32_t)) == NULL) {
 			KGSL_DRV_ERR("invalid cmd buffer ibaddr %08x " \
 					"sizedwords %d\n",
@@ -860,6 +908,7 @@ static long kgsl_ioctl_rb_issueibcmds(struct kgsl_file_private *private,
 		}
 
 		result = kgsl_g12_cmdstream_issueibcmds(&kgsl_driver.g12_device,
+						     private->pagetable,
 						     param.drawctxt_id,
 						     param.ibaddr,
 						     param.sizedwords,
@@ -868,6 +917,53 @@ static long kgsl_ioctl_rb_issueibcmds(struct kgsl_file_private *private,
 	} else {
 		result = -EINVAL;
 	}
+	if (result != 0)
+		goto done;
+
+	if (copy_to_user(arg, &param, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+done:
+	return result;
+}
+
+static long kgsl_ioctl_rb_issueibcmds_pre(struct kgsl_file_private *private,
+				     void __user *arg)
+{
+	int result = 0;
+	struct kgsl_ringbuffer_issueibcmds_pre param;
+
+	if (copy_from_user(&param, arg, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+
+	if (param.drawctxt_id >= KGSL_CONTEXT_MAX ||
+		(private->yamato_ctxt_id_mask & 1 <<
+		param.drawctxt_id) == 0) {
+		result = -EINVAL;
+		KGSL_DRV_ERR("invalid drawctxt drawctxt_id %d\n",
+			      param.drawctxt_id);
+		result = -EINVAL;
+		goto done;
+	}
+
+	if (kgsl_sharedmem_find_region(private, param.ibaddr,
+			param.sizedwords*sizeof(uint32_t)) == NULL) {
+		KGSL_DRV_ERR("invalid cmd buffer ibaddr %08x " \
+				"sizedwords %d\n",
+				param.ibaddr, param.sizedwords);
+		result = -EINVAL;
+		goto done;
+	}
+
+	result = kgsl_ringbuffer_issueibcmds(&kgsl_driver.yamato_device,
+				     param.drawctxt_id,
+				     param.ibaddr,
+				     param.sizedwords,
+				     &param.timestamp,
+				     param.flags);
 	if (result != 0)
 		goto done;
 
@@ -897,13 +993,40 @@ static long kgsl_ioctl_cmdstream_readtimestamp(struct kgsl_file_private
 							param.type);
 	} else if (param.device_id == KGSL_DEVICE_G12) {
 		struct kgsl_device *device;
-		kgsl_g12_check_open();
+		KGSL_G12_PRE_HWACCESS();
 		device = &kgsl_driver.g12_device;
 
 		param.timestamp = device->timestamp;
 	} else {
 		result = -EINVAL;
 	}
+
+	if (result != 0)
+		goto done;
+
+	if (copy_to_user(arg, &param, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+done:
+	return result;
+}
+
+static long kgsl_ioctl_cmdstream_readtimestamp_pre(struct kgsl_file_private
+						*private, void __user *arg)
+{
+	int result = 0;
+	struct kgsl_cmdstream_readtimestamp_pre param;
+
+	if (copy_from_user(&param, arg, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+
+	param.timestamp =
+		kgsl_cmdstream_readtimestamp(
+					&kgsl_driver.yamato_device,
+						param.type);
 
 	if (result != 0)
 		goto done;
@@ -947,7 +1070,7 @@ static long kgsl_ioctl_cmdstream_freememontimestamp(struct kgsl_file_private
 
 		kgsl_runpending(&kgsl_driver.yamato_device);
 	} else if (param.device_id == KGSL_DEVICE_G12) {
-		kgsl_g12_check_open();
+		KGSL_G12_PRE_HWACCESS();
 		result = kgsl_cmdstream_freememontimestamp(
 						&kgsl_driver.g12_device,
 							entry,
@@ -958,6 +1081,39 @@ static long kgsl_ioctl_cmdstream_freememontimestamp(struct kgsl_file_private
 	} else {
 		result = -EINVAL;
 	}
+done:
+	return result;
+}
+
+static long kgsl_ioctl_cmdstream_freememontimestamp_pre(struct kgsl_file_private
+						*private, void __user *arg)
+{
+	int result = 0;
+	struct kgsl_cmdstream_freememontimestamp_pre param;
+	struct kgsl_mem_entry *entry = NULL;
+
+	if (copy_from_user(&param, arg, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+
+	entry = kgsl_sharedmem_find(private, param.gpuaddr);
+	if (entry == NULL) {
+		KGSL_DRV_ERR("invalid gpuaddr %08x\n", param.gpuaddr);
+		result = -EINVAL;
+		goto done;
+	}
+#ifdef CONFIG_MSM_KGSL_MMU
+	if (entry->memdesc.priv & KGSL_MEMFLAGS_VMALLOC_MEM)
+		entry->memdesc.priv &= ~KGSL_MEMFLAGS_MEM_REQUIRES_FLUSH;
+#endif
+	result = kgsl_cmdstream_freememontimestamp(
+					&kgsl_driver.yamato_device,
+						entry,
+						param.timestamp,
+						param.type);
+
+	kgsl_runpending(&kgsl_driver.yamato_device);
 done:
 	return result;
 }
@@ -988,11 +1144,10 @@ static long kgsl_ioctl_drawctxt_create(struct kgsl_file_private *private,
 
 		private->yamato_ctxt_id_mask |= 1 << param.drawctxt_id;
 	} else if (param.device_id == KGSL_DEVICE_G12) {
-		kgsl_g12_check_open();
+		KGSL_G12_PRE_HWACCESS();
 		result = kgsl_g12_drawctxt_create(&kgsl_driver.g12_device,
-					0,
-					&param.drawctxt_id,
-					param.flags);
+					private->g12_ctxt_id_mask,
+					&param.drawctxt_id);
 		if (result != 0)
 			goto done;
 
@@ -1003,10 +1158,39 @@ static long kgsl_ioctl_drawctxt_create(struct kgsl_file_private *private,
 
 		/* if KGSL_CONTEXT_MAX is more than 16,
 		then linked list should be used for them */
-		private->g12_ctxt_id_mask |= 1 << (param.drawctxt_id - 1);
+		private->g12_ctxt_id_mask |= 1 << param.drawctxt_id;
 	} else {
 		result = -EINVAL;
 	}
+
+done:
+	return result;
+}
+
+static long kgsl_ioctl_drawctxt_create_pre(struct kgsl_file_private *private,
+				      void __user *arg)
+{
+	int result = 0;
+	struct kgsl_drawctxt_create_pre param;
+
+	if (copy_from_user(&param, arg, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+
+	result = kgsl_drawctxt_create(&kgsl_driver.yamato_device,
+				private->pagetable,
+				param.flags,
+				&param.drawctxt_id);
+	if (result != 0)
+		goto done;
+
+	if (copy_to_user(arg, &param, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+
+	private->yamato_ctxt_id_mask |= 1 << param.drawctxt_id;
 
 done:
 	return result;
@@ -1037,10 +1221,8 @@ static long kgsl_ioctl_drawctxt_destroy(struct kgsl_file_private *private,
 			private->yamato_ctxt_id_mask &=
 					~(1 << param.drawctxt_id);
 	} else if (param.device_id == KGSL_DEVICE_G12) {
-		kgsl_g12_check_open();
-		if (param.drawctxt_id >= KGSL_CONTEXT_MAX
-				|| (private->g12_ctxt_id_mask & 1 <<
-				param.drawctxt_id) == 0) {
+		KGSL_G12_PRE_HWACCESS();
+		if ((private->g12_ctxt_id_mask & 1 << param.drawctxt_id) == 0) {
 			result = -EINVAL;
 			goto done;
 		}
@@ -1048,12 +1230,40 @@ static long kgsl_ioctl_drawctxt_destroy(struct kgsl_file_private *private,
 		result = kgsl_g12_drawctxt_destroy(&kgsl_driver.g12_device,
 					param.drawctxt_id);
 		if (result == 0)
-			private->g12_ctxt_id_mask &= ~(1 << param.drawctxt_id);
+			private->g12_ctxt_id_mask &= ~(1 <<
+						param.drawctxt_id);
 
 		kgsl_runpending(&kgsl_driver.g12_device);
 	} else {
 		result = -EINVAL;
 	}
+done:
+	return result;
+}
+
+static long kgsl_ioctl_drawctxt_destroy_pre(struct kgsl_file_private *private,
+				       void __user *arg)
+{
+	int result = 0;
+	struct kgsl_drawctxt_destroy param;
+
+	if (copy_from_user(&param, arg, sizeof(param))) {
+		result = -EFAULT;
+		goto done;
+	}
+
+	if (param.drawctxt_id >= KGSL_CONTEXT_MAX ||
+			(private->yamato_ctxt_id_mask & 1 <<
+			param.drawctxt_id) == 0) {
+		result = -EINVAL;
+		goto done;
+	}
+
+	result = kgsl_drawctxt_destroy(&kgsl_driver.yamato_device,
+				param.drawctxt_id);
+	if (result == 0)
+		private->yamato_ctxt_id_mask &=
+				~(1 << param.drawctxt_id);
 done:
 	return result;
 }
@@ -1109,10 +1319,7 @@ static long kgsl_ioctl_sharedmem_free(struct kgsl_file_private *private,
 		result = -EFAULT;
 		goto done;
 	}
-	if (param.gpuaddr > kgsl_driver.yamato_device.mmu.va_base)
-		entry = kgsl_sharedmem_find(private, param.gpuaddr);
-	else
-		entry = kgsl_sharedmem_find_phys(private, param.gpuaddr);
+	entry = kgsl_sharedmem_find(private, param.gpuaddr);
 
 	if (entry == NULL) {
 		KGSL_DRV_ERR("invalid gpuaddr %08x\n", param.gpuaddr);
@@ -1170,15 +1377,14 @@ static long kgsl_ioctl_sharedmem_from_vmalloc(struct kgsl_file_private *private,
 		goto error;
 	}
 
-	if ((private->vmalloc_size + len) > KGSL_GRAPHICS_MEMORY_LOW_WATERMARK
-	    && !param.force_no_low_watermark) {
-		result = -ENOMEM;
-		goto error;
-	}
-
 	list_for_each_entry_safe(entry, entry_tmp,
 				&private->preserve_entry_list, list) {
-		if (entry->memdesc.size == len) {
+		/* make sure that read only pages aren't accidently
+		 * used when read-write pages are requested
+		 */
+		if (entry->memdesc.size == len &&
+		    ((entry->memdesc.priv & KGSL_MEMFLAGS_GPUREADONLY) ==
+		    (param.flags & KGSL_MEMFLAGS_GPUREADONLY))) {
 			list_del(&entry->list);
 			found = 1;
 			break;
@@ -1205,7 +1411,9 @@ static long kgsl_ioctl_sharedmem_from_vmalloc(struct kgsl_file_private *private,
 		result =
 		    kgsl_mmu_map(private->pagetable,
 			(unsigned long)vmalloc_area, len,
-			GSL_PT_PAGE_RV | GSL_PT_PAGE_WV,
+			GSL_PT_PAGE_RV |
+			((param.flags & KGSL_MEMFLAGS_GPUREADONLY) ?
+			0 : GSL_PT_PAGE_WV),
 			&entry->memdesc.gpuaddr, KGSL_MEMFLAGS_ALIGN4K);
 		if (result != 0)
 			goto error_free_vmalloc;
@@ -1213,7 +1421,8 @@ static long kgsl_ioctl_sharedmem_from_vmalloc(struct kgsl_file_private *private,
 		entry->memdesc.pagetable = private->pagetable;
 		entry->memdesc.size = len;
 		entry->memdesc.priv = KGSL_MEMFLAGS_VMALLOC_MEM |
-			    KGSL_MEMFLAGS_MEM_REQUIRES_FLUSH;
+			    KGSL_MEMFLAGS_MEM_REQUIRES_FLUSH |
+			    (param.flags & KGSL_MEMFLAGS_GPUREADONLY);
 		entry->memdesc.physaddr = (unsigned long)vmalloc_area;
 		entry->priv = private;
 		private->vmalloc_size += len;
@@ -1307,6 +1516,7 @@ static int kgsl_ioctl_sharedmem_from_pmem(struct kgsl_file_private *private,
 	struct kgsl_mem_entry *entry = NULL;
 	unsigned long start = 0, len = 0;
 	struct file *pmem_file = NULL;
+	uint64_t total_offset;
 
 	if (copy_from_user(&param, arg, sizeof(param))) {
 		result = -EFAULT;
@@ -1321,7 +1531,8 @@ static int kgsl_ioctl_sharedmem_from_pmem(struct kgsl_file_private *private,
 		if (!param.len)
 			param.len = len;
 
-		if (param.offset + param.len > len) {
+		total_offset = param.offset + param.len;
+		if (total_offset > (uint64_t)len) {
 			KGSL_DRV_ERR("%s: region too large "
 					"0x%x + 0x%x >= 0x%lx\n",
 				     __func__, param.offset, param.len, len);
@@ -1341,7 +1552,6 @@ static int kgsl_ioctl_sharedmem_from_pmem(struct kgsl_file_private *private,
 	}
 
 	entry->pmem_file = pmem_file;
-	list_add(&entry->list, &private->mem_list);
 
 	entry->memdesc.pagetable = private->pagetable;
 
@@ -1360,14 +1570,19 @@ static int kgsl_ioctl_sharedmem_from_pmem(struct kgsl_file_private *private,
 
 	/* If the offset is not at 4K boundary then add the correct offset
 	 * value to gpuaddr */
-	entry->memdesc.physaddr += (param.offset & ~KGSL_PAGEMASK);
-	/* Once Z180 MMU is working then use memdesc.gpuaddr */
-	param.gpuaddr = entry->memdesc.physaddr;
+	total_offset = entry->memdesc.gpuaddr + (param.offset & ~KGSL_PAGEMASK);
+	if (total_offset > (uint64_t)UINT_MAX) {
+		result = -EINVAL;
+		goto error_unmap_entry;
+	}
+	entry->memdesc.gpuaddr = total_offset;
+	param.gpuaddr = entry->memdesc.gpuaddr;
 
 	if (copy_to_user(arg, &param, sizeof(param))) {
 		result = -EFAULT;
 		goto error_unmap_entry;
 	}
+	list_add(&entry->list, &private->mem_list);
 	return result;
 
 error_unmap_entry:
@@ -1420,6 +1635,7 @@ static long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 	int result = 0;
 	struct kgsl_file_private *private = filep->private_data;
 	struct kgsl_drawctxt_set_bin_base_offset binbase;
+	struct kgsl_drawctxt_set_bin_base_offset_pre binbase_pre;
 
 	BUG_ON(private == NULL);
 
@@ -1432,12 +1648,27 @@ static long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 		    kgsl_ioctl_device_getproperty(private, (void __user *)arg);
 		break;
 
+	case IOCTL_KGSL_DEVICE_GETPROPERTY_PRE:
+		result =
+		    kgsl_ioctl_device_getproperty_pre(private, (void __user *)arg);
+		break;
+
 	case IOCTL_KGSL_DEVICE_REGREAD:
 		result = kgsl_ioctl_device_regread(private, (void __user *)arg);
 		break;
 
+	case IOCTL_KGSL_DEVICE_REGREAD_PRE:
+		result = kgsl_ioctl_device_regread_pre(private, (void __user *)arg);
+		break;
+
 	case IOCTL_KGSL_DEVICE_WAITTIMESTAMP:
 		result = kgsl_ioctl_device_waittimestamp(private,
+							(void __user *)arg);
+		/* order reads to the buffer written to by the GPU */
+		rmb();
+		break;
+	case IOCTL_KGSL_DEVICE_WAITTIMESTAMP_PRE:
+		result = kgsl_ioctl_device_waittimestamp_pre(private,
 							(void __user *)arg);
 		/* order reads to the buffer written to by the GPU */
 		rmb();
@@ -1454,9 +1685,25 @@ static long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 		result = kgsl_ioctl_rb_issueibcmds(private, (void __user *)arg);
 		break;
 
+	case IOCTL_KGSL_RINGBUFFER_ISSUEIBCMDS_PRE:
+#ifdef CONFIG_MSM_KGSL_MMU
+		if (kgsl_cache_enable)
+			kgsl_clean_cache_all(private);
+#endif
+#ifdef CONFIG_MSM_KGSL_DRM
+		kgsl_gpu_mem_flush();
+#endif
+		result = kgsl_ioctl_rb_issueibcmds_pre(private, (void __user *)arg);
+		break;
+
 	case IOCTL_KGSL_CMDSTREAM_READTIMESTAMP:
 		result =
 		    kgsl_ioctl_cmdstream_readtimestamp(private,
+							(void __user *)arg);
+		break;
+	case IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_PRE:
+		result =
+		    kgsl_ioctl_cmdstream_readtimestamp_pre(private,
 							(void __user *)arg);
 		break;
 
@@ -1465,15 +1712,28 @@ static long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 		    kgsl_ioctl_cmdstream_freememontimestamp(private,
 						    (void __user *)arg);
 		break;
+	case IOCTL_KGSL_CMDSTREAM_FREEMEMONTIMESTAMP_PRE:
+		result =
+		    kgsl_ioctl_cmdstream_freememontimestamp_pre(private,
+						    (void __user *)arg);
+		break;
 
 	case IOCTL_KGSL_DRAWCTXT_CREATE:
 		result = kgsl_ioctl_drawctxt_create(private,
+							(void __user *)arg);
+		break;
+	case IOCTL_KGSL_DRAWCTXT_CREATE_PRE:
+		result = kgsl_ioctl_drawctxt_create_pre(private,
 							(void __user *)arg);
 		break;
 
 	case IOCTL_KGSL_DRAWCTXT_DESTROY:
 		result =
 		    kgsl_ioctl_drawctxt_destroy(private, (void __user *)arg);
+		break;
+	case IOCTL_KGSL_DRAWCTXT_DESTROY_PRE:
+		result =
+		    kgsl_ioctl_drawctxt_destroy_pre(private, (void __user *)arg);
 		break;
 
 	case IOCTL_KGSL_SHAREDMEM_FREE:
@@ -1522,10 +1782,32 @@ static long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 				     binbase.drawctxt_id);
 		}
 		break;
+	case IOCTL_KGSL_DRAWCTXT_SET_BIN_BASE_OFFSET_PRE:
+		if (copy_from_user(&binbase_pre, (void __user *)arg,
+				   sizeof(binbase_pre))) {
+			result = -EFAULT;
+			break;
+		}
+
+		if ((private->yamato_ctxt_id_mask &
+					(1 << binbase_pre.drawctxt_id))) {
+			result = kgsl_drawctxt_set_bin_base_offset(
+					&kgsl_driver.yamato_device,
+					binbase_pre.drawctxt_id,
+					binbase_pre.offset);
+		} else {
+			result = -EINVAL;
+			KGSL_DRV_ERR("invalid drawctxt drawctxt_id %d\n",
+				     binbase_pre.drawctxt_id);
+		}
+		break;
 
 	case IOCTL_KGSL_CMDWINDOW_WRITE:
 		result = kgsl_ioctl_cmdwindow_write(private,
 							(void __user *)arg);
+		break;
+	case IOCTL_KGSL_CMDWINDOW_WRITE_PRE:
+		return -EINVAL; //Exist only for G12
 		break;
 	default:
 		KGSL_DRV_ERR("invalid ioctl code %08x\n", cmd);
@@ -1556,6 +1838,9 @@ static int kgsl_mmap(struct file *file, struct vm_area_struct *vma)
 			goto done;
 		}
 		memdesc = &device->memstore;
+	} else {
+		result = -EINVAL;
+		goto done;
 	}
 
 	if (memdesc->size != vma_size) {
@@ -1594,13 +1879,30 @@ struct kgsl_driver kgsl_driver = {
 		 .fops = &kgsl_fops,
 	 },
 	.open_count = ATOMIC_INIT(0),
-	.g12_open_count = ATOMIC_INIT(0),
 	.mutex = __MUTEX_INITIALIZER(kgsl_driver.mutex),
 };
 
 
 static void kgsl_driver_cleanup(void)
 {
+
+	struct kgsl_memregion *regspace = &kgsl_driver.yamato_device.regspace;
+
+	regspace = &kgsl_driver.yamato_device.regspace;
+	if (regspace->mmio_virt_base) {
+		iounmap(regspace->mmio_virt_base);
+		release_mem_region(regspace->mmio_phys_base,
+				   regspace->sizebytes);
+		memset(&regspace, 0, sizeof(*regspace));
+	}
+
+	regspace = &kgsl_driver.g12_device.regspace;
+	if (regspace->mmio_virt_base) {
+		iounmap(regspace->mmio_virt_base);
+		release_mem_region(regspace->mmio_phys_base,
+				   regspace->sizebytes);
+		memset(&regspace, 0, sizeof(*regspace));
+	}
 
 	if (kgsl_driver.yamato_interrupt_num > 0) {
 		if (kgsl_driver.yamato_have_irq) {
@@ -1618,7 +1920,7 @@ static void kgsl_driver_cleanup(void)
 		kgsl_driver.g12_interrupt_num = 0;
 	}
 
-	pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ, DRIVER_NAME);
+	pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ, "kgsl_3d");
 
 	if (kgsl_driver.yamato_grp_pclk) {
 		clk_put(kgsl_driver.yamato_grp_pclk);
@@ -1646,6 +1948,7 @@ static void kgsl_driver_cleanup(void)
 	if (kgsl_driver.g12_grp_clk) {
 		clk_put(kgsl_driver.g12_grp_clk);
 		kgsl_driver.g12_grp_clk = NULL;
+		pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ, "kgsl_2d");
 	}
 
 	kgsl_driver.pdev = NULL;
@@ -1693,10 +1996,6 @@ static int __devinit kgsl_platform_probe(struct platform_device *pdev)
 
 	/* put the AXI bus into asynchronous mode with the graphics cores */
 	if (pdata != NULL) {
-		if ((pdata->set_grp2d_async != NULL) &&
-			(pdata->max_grp2d_freq) &&
-			(!pdata->set_grp2d_async()))
-			clk_set_min_rate(clk, pdata->max_grp2d_freq);
 		if ((pdata->set_grp3d_async != NULL) &&
 			(pdata->max_grp3d_freq) &&
 			(!pdata->set_grp3d_async()))
@@ -1725,18 +2024,26 @@ static int __devinit kgsl_platform_probe(struct platform_device *pdev)
 	}
 	kgsl_driver.g12_grp_clk = clk;
 
+	if (pdata != NULL && clk != NULL) {
+		if ((pdata->set_grp2d_async != NULL) &&
+			(pdata->max_grp2d_freq) &&
+			(!pdata->set_grp2d_async()))
+			clk_set_min_rate(clk, pdata->max_grp2d_freq);
+	}
+
 	kgsl_driver.power_flags = 0;
 
-	pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ, DRIVER_NAME,
-				PM_QOS_DEFAULT_VALUE);
-
 	if (pdata) {
-		kgsl_driver.clk_freq[KGSL_AXI_MAX_FREQ] = pdata->max_axi_freq;
+		kgsl_driver.clk_freq[KGSL_AXI_HIGH_3D] = pdata->high_axi_3d;
+		kgsl_driver.clk_freq[KGSL_AXI_HIGH_2D] = pdata->high_axi_2d;
 		kgsl_driver.clk_freq[KGSL_2D_MIN_FREQ] = pdata->min_grp2d_freq;
 		kgsl_driver.clk_freq[KGSL_2D_MAX_FREQ] = pdata->max_grp2d_freq;
 		kgsl_driver.clk_freq[KGSL_3D_MIN_FREQ] = pdata->min_grp3d_freq;
 		kgsl_driver.clk_freq[KGSL_3D_MAX_FREQ] = pdata->max_grp3d_freq;
 	}
+
+	pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ, "kgsl_3d",
+				PM_QOS_DEFAULT_VALUE);
 
 	/*acquire yamato interrupt */
 	kgsl_driver.yamato_interrupt_num =
@@ -1782,6 +2089,8 @@ static int __devinit kgsl_platform_probe(struct platform_device *pdev)
 		disable_irq(kgsl_driver.g12_interrupt_num);
 
 		/* g12 config */
+		pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ, "kgsl_2d",
+				PM_QOS_DEFAULT_VALUE);
 		result = kgsl_g12_config(&kgsl_driver.g12_config, pdev);
 		if (result != 0)
 			goto done;

@@ -52,11 +52,12 @@
 #define KGSL_CACHE_VMALLOC_ADDR	0x00000020
 
 enum kgsl_clk_freq {
-	KGSL_AXI_MAX_FREQ = 0,
-	KGSL_2D_MIN_FREQ = 1,
-	KGSL_2D_MAX_FREQ = 2,
-	KGSL_3D_MIN_FREQ = 3,
-	KGSL_3D_MAX_FREQ = 4,
+	KGSL_AXI_HIGH_2D = 0,
+	KGSL_AXI_HIGH_3D = 1,
+	KGSL_2D_MIN_FREQ = 2,
+	KGSL_2D_MAX_FREQ = 3,
+	KGSL_3D_MIN_FREQ = 4,
+	KGSL_3D_MAX_FREQ = 5,
 	KGSL_NUM_FREQ
 };
 
@@ -64,7 +65,6 @@ struct kgsl_driver {
 	struct miscdevice misc;
 	struct platform_device *pdev;
 	atomic_t open_count;
-	atomic_t g12_open_count;
 	struct mutex mutex;
 
 	int yamato_interrupt_num;
@@ -92,6 +92,11 @@ struct kgsl_driver {
 	struct kgsl_device g12_device;
 
 	struct list_head client_list;
+
+	/* Global list of pagetables */
+	struct list_head pagetable_list;
+	/* Mutex for accessing the pagetable list */
+	struct mutex pt_mutex;
 };
 
 extern struct kgsl_driver kgsl_driver;
@@ -115,10 +120,19 @@ enum kgsl_status {
 #define KGSL_TRUE 1
 #define KGSL_FALSE 0
 
-/* TODO: Until idle detection is implemented, suspend/resume won't work.
- *       Fill these in once that support is added
- */
-#define KGSL_G12_PRE_HWACCESS() mutex_lock(&kgsl_driver.mutex)
+#define KGSL_G12_PRE_HWACCESS() \
+while (1) { \
+	if (kgsl_driver.g12_device.hwaccess_blocked == KGSL_FALSE) { \
+		break; \
+	} \
+	if (kgsl_driver.is_suspended != KGSL_TRUE) { \
+		kgsl_g12_wake(&kgsl_driver.g12_device); \
+		break; \
+	} \
+	mutex_unlock(&kgsl_driver.mutex); \
+	wait_for_completion(&kgsl_driver.g12_device.hwaccess_gate); \
+	mutex_lock(&kgsl_driver.mutex); \
+}
 #define KGSL_G12_POST_HWACCESS() mutex_unlock(&kgsl_driver.mutex)
 
 #define KGSL_PRE_HWACCESS() \
@@ -138,11 +152,16 @@ while (1) { \
 #define KGSL_POST_HWACCESS() \
 	mutex_unlock(&kgsl_driver.mutex)
 
+#ifdef CONFIG_MSM_KGSL_MMU_PAGE_FAULT
+#define MMU_CONFIG 2
+#else
+#define MMU_CONFIG 1
+#endif
+
 void kgsl_remove_mem_entry(struct kgsl_mem_entry *entry, bool preserve);
 
 int kgsl_pwrctrl(unsigned int pwrflag);
 int kgsl_yamato_sleep(struct kgsl_device *device, const int idle);
-void kgsl_g12_check_open(void);
 int kgsl_g12_last_release_locked(void);
 int kgsl_g12_first_open_locked(void);
 int kgsl_g12_sleep(struct kgsl_device *device, const int idle);
